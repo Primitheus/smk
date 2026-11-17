@@ -19,7 +19,7 @@ void flash_read_into(flash_window_t window, uint16_t addr, __xdata uint8_t *dst,
     {
         FLASHCON = FLASHCON_FOR(window);
         for (uint8_t i = 0; i < len; i++) {
-            __code uint8_t *p = (__code uint8_t *)(addr + i);
+            const __code uint8_t *p = (const __code uint8_t *)(addr + i);
             dst[i]            = *p;
         }
         FLASHCON = 0;
@@ -34,7 +34,7 @@ bool flash_matches(flash_window_t window, uint16_t addr, const __xdata uint8_t *
     {
         FLASHCON = FLASHCON_FOR(window);
         for (uint8_t i = 0; i < len; i++) {
-            __code uint8_t *p = (__code uint8_t *)(addr + i);
+            const __code uint8_t *p = (const __code uint8_t *)(addr + i);
             if (*p != src[i]) {
                 same = false;
                 break;

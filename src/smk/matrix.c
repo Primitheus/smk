@@ -7,6 +7,9 @@
 #include "user_matrix.h"
 #include "kbdef.h"
 #include "host.h"
+#ifdef X77_CONFIG_ENABLE
+#    include "config.h"
+#endif
 #include "delay.h"
 #include "indicators.h"
 #include "sleep.h"
@@ -86,6 +89,9 @@ static void send_keycode(uint16_t qcode, bool pressed)
 
 static void process_key_state(uint8_t row, uint8_t col, bool pressed)
 {
+#ifdef X77_CONFIG_ENABLE
+    if (!x77_key(row,col,pressed)) return;
+#endif
     const uint16_t base = keymaps[default_layer][row][col];
 
     if (IS_QK_MOMENTARY(base)) {

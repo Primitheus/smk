@@ -177,7 +177,7 @@ foreach keyboard, board : keyboards
         ]
     else
         # settings live outside the program flash, so code may run up to the marker sector
-        platform_cc_args += ['--code-size', '@0@'.format(marker_addr)]
+        platform_cc_args += ['--code-size', '@0@'.format(keyboard == 'ciy-x77' ? 0xe000 : marker_addr)]
     endif
 
     # The bootloader is one image per board rather than per layout: it scans the

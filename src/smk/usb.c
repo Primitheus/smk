@@ -10,6 +10,11 @@
 #include "usbhidreport.h"
 #include "console.h"
 #include "keyboard.h"
+#include "kbdef.h"
+#ifdef X77_CONFIG_ENABLE
+#    include "config.h"
+extern const __code uint8_t x77_layout_id;
+#endif
 #include "delay.h"
 #include <stdint.h>
 #include <string.h>
@@ -57,6 +62,9 @@ typedef enum {
     EP0_OUT_LED,
     EP0_OUT_ISP,
     EP0_OUT_CONSOLE,
+#ifdef USB_STREAM_ENABLE
+    EP0_OUT_STREAM,
+#endif
 } ep0_out_target_t;
 
 const uint8_t hid_report_desc_keyboard[] = {
@@ -148,6 +156,34 @@ const uint8_t hid_report_desc_extra[] = {
         HID_RI_LOGICAL_MAXIMUM(16, 0x00ff),
         HID_RI_REPORT_SIZE(8, 8),
         HID_RI_REPORT_COUNT(8, 5),
+        HID_RI_FEATURE(8, HID_IOF_DATA | HID_IOF_VARIABLE | HID_IOF_ABSOLUTE),
+    HID_RI_END_COLLECTION(0),
+#endif
+
+#ifdef USB_STREAM_ENABLE
+    HID_RI_USAGE_PAGE(16, 0xff32),
+    HID_RI_USAGE(8, 0x01),
+    HID_RI_COLLECTION(8, 0x01),
+        HID_RI_REPORT_ID(8, 8),
+        HID_RI_LOGICAL_MINIMUM(8, 0),
+        HID_RI_LOGICAL_MAXIMUM(16, 255),
+        HID_RI_REPORT_SIZE(8, 8),
+        HID_RI_REPORT_COUNT(8, 7),
+        HID_RI_USAGE(8, 0x01),
+        HID_RI_FEATURE(8, HID_IOF_DATA | HID_IOF_VARIABLE | HID_IOF_ABSOLUTE),
+        HID_RI_REPORT_ID(8, 9),
+        HID_RI_USAGE(8, 0x02),
+        HID_RI_FEATURE(8, HID_IOF_DATA | HID_IOF_VARIABLE | HID_IOF_ABSOLUTE),
+        HID_RI_REPORT_ID(8, 10),
+        HID_RI_REPORT_COUNT(8, 63),
+        HID_RI_USAGE(8, 0x03),
+        HID_RI_OUTPUT(8, HID_IOF_DATA | HID_IOF_VARIABLE | HID_IOF_ABSOLUTE),
+        HID_RI_REPORT_COUNT(8, 7),
+        HID_RI_REPORT_ID(8, 11),
+        HID_RI_USAGE(8, 0x04),
+        HID_RI_FEATURE(8, HID_IOF_DATA | HID_IOF_VARIABLE | HID_IOF_ABSOLUTE),
+        HID_RI_REPORT_ID(8, 12),
+        HID_RI_USAGE(8, 0x05),
         HID_RI_FEATURE(8, HID_IOF_DATA | HID_IOF_VARIABLE | HID_IOF_ABSOLUTE),
     HID_RI_END_COLLECTION(0),
 #endif
@@ -249,7 +285,11 @@ usb_desc_interface_c usb_desc_interface_extra = {
     .bDescriptorType    = USB_DESC_INTERFACE,
     .bInterfaceNumber   = 1,
     .bAlternateSetting  = 0,
+#ifdef USB_STREAM_ENABLE
+    .bNumEndpoints      = 2,
+#else
     .bNumEndpoints      = 1,
+#endif
     .bInterfaceClass    = USB_IFACE_CLASS_HID,
     .bInterfaceSubClass = USB_IFACE_SUBCLASS_NONE,
     .bInterfaceProtocol = USB_IFACE_PROTOCOL_BOOT,
@@ -275,6 +315,18 @@ usb_desc_endpoint_c usb_desc_endpoint_extra = {
     .bInterval        = 1,  // 1ms
 };
 
+#ifdef USB_STREAM_ENABLE
+usb_desc_endpoint_c usb_desc_endpoint_stream = {
+    .bLength          = sizeof(struct usb_desc_endpoint),
+    .bDescriptorType  = USB_DESC_ENDPOINT,
+    .bEndpointAddress = 2 | USB_DIR_OUT,
+    .bmAttributes     = USB_XFER_INTERRUPT,
+    .wMaxPacketSize   = 64,
+    .bInterval        = 1,
+};
+
+#endif
+
 usb_configuration_c usb_config = {
     {
         .bLength             = sizeof(struct usb_desc_configuration),
@@ -292,6 +344,9 @@ usb_configuration_c usb_config = {
         {.interface = &usb_desc_interface_extra},
         {.hid = &usb_desc_hid_extra},
         {.endpoint = &usb_desc_endpoint_extra},
+#ifdef USB_STREAM_ENABLE
+        {.endpoint = &usb_desc_endpoint_stream},
+#endif
         {0},
     },
 };
@@ -349,6 +404,39 @@ static void usb_hid_set_report_handler(struct usb_req_setup *req);
  * 0.5KB of general purpose scratch RAM.
  */
 uint8_t scratch[512];
+#ifdef USB_STREAM_ENABLE
+static volatile __xdata uint8_t stream_packet[8];
+static volatile __bit stream_pending;
+static volatile __bit fast_pending;
+
+// Keep the hardware buffer NAKed until the main loop has copied it.
+// The interrupt does no frame copying, assembly or rendering.
+bool usb_fast_poll(uint8_t *packet)
+{
+    if (!fast_pending) return false;
+    uint8_t saved_page = INSCON;
+    sfr_page_1();
+    bool valid = (OEP2CNT & 0x7f) == 64;
+    if (valid) {
+        for (uint8_t i = 0; i < 64; i++) packet[i] = EP2_OUT_BUF[i];
+    }
+    fast_pending = 0;
+    EP2CON = (EP2CON & (uint8_t)~_IEP2RDY) | _OEP2RDY;
+    INSCON = saved_page;
+    return valid;
+}
+
+// Single-slot mailbox. While pending stays set, the ISR refuses new packets.
+// Only the main loop calls this; no critical section or peripheral register writes.
+bool usb_stream_poll(uint8_t *packet)
+{
+    if (!stream_pending) return false;
+    for (uint8_t i = 0; i < 8; i++) packet[i] = stream_packet[i];
+    stream_pending = 0;
+    return true;
+}
+#endif
+
 
 // usb state
 usb_device_state_t usb_device_state;
@@ -383,6 +471,10 @@ static volatile bool     enum_seen;
 
 static void usb_reset_state(void)
 {
+#ifdef USB_STREAM_ENABLE
+    fast_pending = 0;
+    stream_pending = 0;
+#endif
     usb_device_state     = USB_DEVICE_STATE_DEFAULT;
     received_usb_addr    = 0;
     active_configuration = 0;
@@ -543,6 +635,13 @@ void usb_irq_dispatch(void)
 
     uint8_t if2 = USBIF2;
 
+#ifdef USB_STREAM_ENABLE
+    if (if2 & _OEP2IF) {
+        USBIF2 &= ~_OEP2IF;
+        fast_pending = 1;
+    }
+#endif
+
     if (if2 & _OEP0IF) {
         USBIF2 &= ~_OEP0IF;
         usb_ep0_out_irq();
@@ -606,6 +705,19 @@ static void usb_ep0_out_irq(void)
         }
 
         switch (ep0_out_target) {
+#ifdef USB_STREAM_ENABLE
+            case EP0_OUT_STREAM:
+                if (ep0_out_len != 8 || stream_pending ||
+                    !((EP0_OUT_BUF[0] == 8 && EP0_OUT_BUF[1] == 'S' &&
+                       EP0_OUT_BUF[2] == 'L' && EP0_OUT_BUF[3] == 1 && EP0_OUT_BUF[4] <= 3) ||
+                      (EP0_OUT_BUF[0] == 9 && EP0_OUT_BUF[1] < 54) || EP0_OUT_BUF[0] == 11)) {
+                    ep0_stall();
+                    return;
+                }
+                for (uint8_t i = 0; i < 8; i++) stream_packet[i] = EP0_OUT_BUF[i];
+                stream_pending = 1;
+                break;
+#endif
             case EP0_OUT_LED:
                 keyboard_set_led_state(EP0_OUT_BUF[0]);
                 break;
@@ -819,6 +931,20 @@ static void usb_hid_request(struct usb_req_setup *req)
     bool in = (req->bmRequestType & USB_DIR_MASK) == USB_DIR_IN;
 
     switch (req->bRequest) {
+#ifdef X77_CONFIG_ENABLE
+        case USB_HID_REQ_GET_REPORT:
+            if(in && iface==1 && (req->wValue>>8)==REPORT_TYPE_FEATURE && req->wLength==8) {
+                uint8_t id=(uint8_t)req->wValue;
+                if(id==12) {
+                    scratch[0]=12;scratch[1]='S';scratch[2]='M';scratch[3]='K';
+                    scratch[4]=2;scratch[5]=3;scratch[6]=31;scratch[7]=x77_layout_id;
+                } else if(id==11) {
+                    for(uint8_t i=0;i<8;i++) scratch[i]=x77_reply[i];
+                } else break;
+                ep0_send(scratch,8,req->wLength);return;
+            }
+            break;
+#endif
         case USB_HID_REQ_SET_REPORT:
             if (!in) {
                 usb_hid_set_report_handler(req);
@@ -903,6 +1029,16 @@ static void usb_get_status_handler(struct usb_req_setup *req)
                     scratch[0] = (EP1CON & _IEP1STL) ? 1 : 0;
                     break;
 
+#ifdef USB_STREAM_ENABLE
+                case 0x02:
+                    if (!usb_is_configured()) {
+                        ep0_stall();
+                        return;
+                    }
+                    scratch[0] = (EP2CON & _OEP2STL) ? 1 : 0;
+                    break;
+
+#endif
                 case 0x82:
                     if (!usb_is_configured()) {
                         ep0_stall();
@@ -964,11 +1100,23 @@ static void usb_feature_handler(struct usb_req_setup *req, bool set)
                 if (set) {
                     SET_EP2_IN_STALL;
                 } else {
-                    EP2CON &= ~(_IEP2STL | _IEP2DTG);
+                    EP2CON &= (uint8_t)~(_IEP2STL | _IEP2DTG | _IEP2RDY | _OEP2RDY);
                 }
                 ep0_ack();
                 return;
             }
+#ifdef USB_STREAM_ENABLE
+            if (req->wIndex == 0x02) {
+                if (set) {
+                    EP2CON = (EP2CON & (uint8_t)~(_IEP2RDY | _OEP2RDY)) | _OEP2STL;
+                } else {
+                    EP2CON &= (uint8_t)~(_OEP2STL | _OEP2DTG | _IEP2RDY | _OEP2RDY);
+                    if (!fast_pending) SET_EP2_OUT_RDY;
+                }
+                ep0_ack();
+                return;
+            }
+#endif
             break;
 
         default:
@@ -1014,7 +1162,14 @@ static void usb_set_configuration_handler(struct usb_req_setup *req)
     }
 
     EP1CON &= ~(_IEP1STL | _IEP1DTG);
+#ifdef USB_STREAM_ENABLE
+    EP2CON &= (uint8_t)~(_IEP2STL | _IEP2DTG | _OEP2STL | _OEP2DTG | _IEP2RDY | _OEP2RDY);
+    fast_pending = 0;
+    USBIF2 &= ~_OEP2IF;
+    if (active_configuration) SET_EP2_OUT_RDY;
+#else
     EP2CON &= ~(_IEP2STL | _IEP2DTG);
+#endif
 
     ep0_ack();
 }
@@ -1053,7 +1208,7 @@ static void usb_get_descriptor_handler(struct usb_req_setup *req)
 #define APPEND(addr, length)                          \
     do {                                              \
         for (uint16_t _i = 0; _i < (length); _i++) {  \
-            buf[_i] = ((__code uint8_t *)(addr))[_i]; \
+            buf[_i] = ((__code const uint8_t *)(addr))[_i]; \
         }                                             \
         buf += (length);                              \
     } while (0)
@@ -1154,6 +1309,12 @@ static void usb_hid_set_report_handler(struct usb_req_setup *req)
     }
 
     if (report_type == REPORT_TYPE_FEATURE && iface == 1) {
+#ifdef USB_STREAM_ENABLE
+        if ((report_id == 8 || report_id == 9 || report_id == 11) && req->wLength == 8) {
+            ep0_receive(EP0_OUT_STREAM, req->wLength);
+            return;
+        }
+#endif
 #ifdef ISP_ENABLE
         if (report_id == REPORT_ID_ISP) {
             ep0_receive(EP0_OUT_ISP, req->wLength);

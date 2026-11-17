@@ -68,7 +68,7 @@ void usb_hw_init(void)
     EP1CON  = 0;
     EP2CON  = 0;
     USBIE1  = (_SETUPIE | _SOFIE | _RESMIE | _SUSPIE | _PBRSTIE);
-    USBIE2  = (_OEP0IE | _IEP0IE | _IEP1IE | _IEP2IE);
+    USBIE2  = (_OEP0IE | _IEP0IE | _IEP1IE | _IEP2IE | _OEP2IE);
     USBCON  = (_ENUSB | _SW1CON);
 
     INSCON = saved_page;

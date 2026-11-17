@@ -4,6 +4,8 @@
 
 # SMK - Small (device) Mechanical Keyboard Firmware
 
+This fork adds PC-controlled lighting for the **CIY X77**, including the UK ISO layout. It exposes a vendor HID output report for full RGB frames, with flow control and automatic return to onboard lighting when streaming stops. See [X77 lighting](docs/x77-lighting.md) for the protocol and build settings. Upstream SMK documentation follows below.
+
 [![Build](https://github.com/karstx/smk/actions/workflows/build.yml/badge.svg)](https://github.com/karstx/smk/actions/workflows/build.yml) [![](https://img.shields.io/badge/discord-SMK-blue)](https://discord.gg/SZFBDBuxrK)
 
 This is a keyboard firmware targeting SinoWealth 8051-based devices.

@@ -4,6 +4,9 @@
 #include "keycodes.h"
 #include <stdint.h>
 
+#define USB_STREAM_ENABLE 1
+#define X77_CONFIG_ENABLE 1
+
 #define MATRIX_ROWS 6
 #define MATRIX_COLS 18
 
@@ -142,6 +145,7 @@ enum custom_keycodes {
     FX_SET_3,
     FX_SET_OFF,
 
+    CM_1, CM_2, CM_3, CM_4, CM_5,
     KB_SAFE_RANGE,
 };
 

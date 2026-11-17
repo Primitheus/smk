@@ -80,7 +80,7 @@ void usb_hw_console_send(const __xdata uint8_t *data, uint8_t len);
 
 #define SET_EP2_OUT_RDY     \
     do {                    \
-        EP2CON |= _OEP2RDY; \
+        EP2CON = (EP2CON & (uint8_t)~_IEP2RDY) | _OEP2RDY; \
     } while (0)
 #define SET_EP2_OUT_STALL   \
     do {                    \
@@ -93,11 +93,11 @@ void usb_hw_console_send(const __xdata uint8_t *data, uint8_t len);
 
 #define SET_EP2_IN_RDY      \
     do {                    \
-        EP2CON |= _IEP2RDY; \
+        EP2CON = (EP2CON & (uint8_t)~_OEP2RDY) | _IEP2RDY; \
     } while (0)
 #define SET_EP2_IN_STALL    \
     do {                    \
-        EP2CON |= _IEP2STL; \
+        EP2CON = (EP2CON & (uint8_t)~(_IEP2RDY | _OEP2RDY)) | _IEP2STL; \
     } while (0)
 #define CANCEL_EP2_IN_STALL  \
     do {                     \

@@ -11,7 +11,8 @@ keyboards += {
             'user_init.c',
             'user_sleep.c',
             'kb.c',
-        ),
+            'config.c',
+        ) + (get_option('buildtype') == 'debug' ? [] : src_flash),
         'boot_src' : files('user_matrix.c', 'user_init.c'),
         'layouts' : {
             'default' : {

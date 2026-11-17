@@ -4,6 +4,7 @@
 #include "usb.h"
 #include "keyboard.h"
 #include "kbdef.h"
+#include "config.h"
 
 extern void indicators_next_effect();
 extern void indicators_set_effect(uint8_t fx);
@@ -13,10 +14,15 @@ extern void indicators_step_color(bool forward);
 extern void indicators_factory_reset();
 
 static __bit gui_locked;
+bool x77_windows_locked(void) {return gui_locked;}
+void x77_clear_locks(void) {gui_locked=false;}
 
 bool kb_process_record(uint16_t keycode, bool key_pressed)
 {
     switch (keycode) {
+        case CM_1: case CM_2: case CM_3: case CM_4: case CM_5:
+            x77_preset_key((uint8_t)(keycode-CM_1),key_pressed);
+            return false;
         case GUI_LOCK:
             if (key_pressed) {
                 gui_locked = !gui_locked;
@@ -73,15 +79,24 @@ bool kb_process_record(uint16_t keycode, bool key_pressed)
 
 void kb_send_report(__xdata report_keyboard_t *report)
 {
-    usb_send_report(report);
+    static __xdata report_keyboard_t merged;
+    for(uint8_t i=0;i<KEYBOARD_REPORT_SIZE;i++) merged.raw[i]=report->raw[i];
+    x77_overlay(&merged.mods,merged.keys,false);
+    usb_send_report(&merged);
 }
 
 void kb_send_nkro(__xdata report_nkro_t *report)
 {
-    usb_send_nkro(report);
+    static __xdata report_nkro_t merged;
+    for(uint8_t i=0;i<NKRO_REPORT_SIZE;i++) merged.raw[i]=report->raw[i];
+    x77_overlay(&merged.mods,merged.bits,true);
+    usb_send_nkro(&merged);
 }
 
 void kb_send_extra(__xdata report_extra_t *report)
 {
     usb_send_extra(report);
 }
+
+void kb_init(void) {x77_init();}
+void kb_update(void) {x77_task();}
